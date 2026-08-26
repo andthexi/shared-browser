@@ -24,6 +24,9 @@ shared-browser stop
 The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
 explicit file uploads, but submit-like or ambiguous clicks are rejected.
 
+The default display is `1680x945`. Change `SCREEN_WIDTH` and `SCREEN_HEIGHT` in the local `.env`
+when using a different VNC display.
+
 ## Planned runtime architecture
 
 ```text

@@ -34,8 +34,8 @@ describe('configuration', () => {
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
     })).toMatchObject({
-      screenWidth: 1280,
-      screenHeight: 900,
+      screenWidth: 1680,
+      screenHeight: 945,
       screenDepth: 24,
       pageLoadTimeoutMs: 30_000,
       actionTimeoutMs: 10_000,
