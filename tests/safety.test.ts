@@ -6,6 +6,7 @@ describe('click safety', () => {
   it('allows explicit non-submit controls', () => {
     expect(classifyClickSafety({ tagName: 'BUTTON', type: 'button', insideForm: true, accessibleName: 'Show form' })).toEqual({ ok: true });
     expect(classifyClickSafety({ tagName: 'A', type: '', insideForm: true, accessibleName: 'Next page' })).toEqual({ ok: true });
+    expect(classifyClickSafety({ tagName: 'A', type: 'button', insideForm: false, accessibleName: 'Apply now' })).toEqual({ ok: true });
   });
 
   it('rejects submit-like and ambiguous controls', () => {

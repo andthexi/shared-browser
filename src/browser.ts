@@ -131,7 +131,7 @@ export class SharedBrowser {
         env: { ...process.env, DISPLAY: this.config.display },
       });
       this.page = this.context.pages()[0] ?? await this.context.newPage();
-      await this.page.addInitScript({ content: submitGuard });
+      await this.context.addInitScript({ content: submitGuard });
       this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord']);
       await this.wait(300);
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
@@ -228,7 +228,13 @@ export class SharedBrowser {
     });
     const safety = classifyClickSafety(metadata);
     if (!safety.ok) return error(safety.reason);
+    const popup = this.context?.waitForEvent('page', { timeout: this.config.actionTimeoutMs }).catch(() => undefined);
     await withAgentGuard(this.page as Page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
+    const openedPage = await popup;
+    if (openedPage !== undefined) {
+      this.page = openedPage;
+      await openedPage.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
+    }
     await this.page?.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
     return success('click', { target: targetDescription(target), url: this.page?.url(), title: await this.page?.title() });
   }
