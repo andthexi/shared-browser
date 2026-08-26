@@ -132,7 +132,7 @@ export class SharedBrowser {
       });
       this.page = this.context.pages()[0] ?? await this.context.newPage();
       await this.context.addInitScript({ content: submitGuard });
-      this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord']);
+      this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
       await this.wait(300);
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
       await this.server.start();
