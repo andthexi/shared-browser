@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 
 describe('configuration', () => {
-  it('loads required values and defaults optional values', () => {
+  it('loads Xpra values and defaults optional values', () => {
     expect(loadConfig({
-      VNC_PORT: '5907',
-      DISPLAY: ':107',
+      XPRA_PORT: '14507',
+      XPRA_BIND_HOST: '127.0.0.1',
+      XPRA_DISPLAY: ':107',
+      XPRA_HTML: 'on',
+      XPRA_SOCKET_DIR: './runtime/xpra',
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
       SCREEN_WIDTH: '1440',
@@ -15,8 +18,11 @@ describe('configuration', () => {
       PAGE_LOAD_TIMEOUT_MS: '45000',
       ACTION_TIMEOUT_MS: '12000',
     })).toEqual({
-      vncPort: 5907,
-      display: ':107',
+      xpraPort: 14507,
+      xpraBindHost: '127.0.0.1',
+      xpraDisplay: ':107',
+      xpraHtml: 'on',
+      xpraSocketDir: './runtime/xpra',
       profileDir: './runtime/profile',
       socketPath: './runtime/control.sock',
       screenWidth: 1440,
@@ -27,13 +33,16 @@ describe('configuration', () => {
     });
   });
 
-  it('uses documented defaults', () => {
+  it('uses documented Xpra defaults', () => {
     expect(loadConfig({
-      VNC_PORT: '5900',
-      DISPLAY: ':99',
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
     })).toMatchObject({
+      xpraPort: 14500,
+      xpraBindHost: '127.0.0.1',
+      xpraDisplay: ':99',
+      xpraHtml: 'on',
+      xpraSocketDir: './runtime/xpra',
       screenWidth: 1280,
       screenHeight: 900,
       screenDepth: 24,
@@ -43,17 +52,16 @@ describe('configuration', () => {
   });
 
   it('rejects missing and invalid values', () => {
+    expect(() => loadConfig({ BROWSER_CONTROL_SOCKET: './runtime/control.sock' })).toThrow('BROWSER_PROFILE_DIR');
     expect(() => loadConfig({
-      DISPLAY: ':99',
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
-    })).toThrow('VNC_PORT');
+      XPRA_HTML: 'invalid',
+    })).toThrow('XPRA_HTML');
     expect(() => loadConfig({
-      VNC_PORT: '5900',
-      DISPLAY: ':99',
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
-      SCREEN_DEPTH: '17',
-    })).toThrow('SCREEN_DEPTH');
+      XPRA_DISPLAY: '99',
+    })).toThrow('XPRA_DISPLAY');
   });
 });

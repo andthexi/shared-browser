@@ -1,20 +1,15 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 
 import type { BrowserConfig } from './config.js';
-import { displayNumber } from './config.js';
 import { classifyClickSafety } from './safety.js';
 import { ControlServer, probeTcpPort, type ControlRequest, type ControlResponse } from './socket.js';
+import { startXpra, stopXpra, type XpraProcess } from './xpra.js';
 
 declare global {
   interface Window { __sharedBrowserAgentAction?: boolean; }
 }
 
-interface ManagedProcess {
-  child: ChildProcess;
-  name: string;
-}
 
 interface Target {
   label?: string;
@@ -108,8 +103,7 @@ async function pageMetadata(page: Page): Promise<PageMetadata> {
 }
 
 export class SharedBrowser {
-  private xvfb: ManagedProcess | undefined;
-  private vnc: ManagedProcess | undefined;
+  private xpra: XpraProcess | undefined;
   private context: BrowserContext | undefined;
   private page: Page | undefined;
   private server: ControlServer | undefined;
@@ -118,22 +112,19 @@ export class SharedBrowser {
   constructor(private readonly config: BrowserConfig) {}
 
   async start(): Promise<void> {
-    await probeTcpPort(this.config.vncPort);
+    await probeTcpPort(this.config.xpraPort);
     await mkdir(this.config.profileDir, { recursive: true });
-    displayNumber(this.config.display);
-    this.xvfb = this.spawnOwned('Xvfb', 'Xvfb', [this.config.display, '-screen', '0', `${this.config.screenWidth}x${this.config.screenHeight}x${this.config.screenDepth}`, '-nolisten', 'tcp']);
-    await this.wait(300);
     try {
+      this.xpra = await startXpra(this.config);
+      await this.wait(500);
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
         headless: false,
         viewport: { width: this.config.screenWidth, height: this.config.screenHeight },
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
-        env: { ...process.env, DISPLAY: this.config.display },
+        env: { ...process.env, DISPLAY: this.config.xpraDisplay },
       });
       this.page = this.context.pages()[0] ?? await this.context.newPage();
       await this.context.addInitScript({ content: submitGuard });
-      this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
-      await this.wait(300);
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
       await this.server.start();
       process.stdout.write(`${JSON.stringify(await this.statusResponse())}\n`);
@@ -159,44 +150,29 @@ export class SharedBrowser {
   }
 
   private async stopChildren(): Promise<void> {
-    for (const managed of [this.vnc, this.xvfb]) {
-      if (managed === undefined) continue;
-      if (managed.child.exitCode === null) {
-        managed.child.kill('SIGTERM');
-        await new Promise<void>((resolve) => {
-          if (managed.child.exitCode !== null) resolve();
-          else managed.child.once('exit', () => resolve());
-        });
-      }
+    if (this.xpra !== undefined) {
+      stopXpra(this.xpra);
+      await new Promise<void>((resolve) => {
+        if (this.xpra?.child.exitCode !== null) resolve();
+        else this.xpra?.child.once('exit', () => resolve());
+      });
+      this.xpra = undefined;
     }
-    this.vnc = undefined;
-    this.xvfb = undefined;
   }
 
   async statusResponse(): Promise<ControlResponse> {
     return success('status', {
       state: this.stopping ? 'stopping' : this.server === undefined ? 'starting' : 'running',
-      display: this.config.display,
-      vncPort: this.config.vncPort,
+      display: this.config.xpraDisplay,
+      xpraPort: this.config.xpraPort,
+      xpraBindHost: this.config.xpraBindHost,
       controlSocket: this.config.socketPath,
-      xvfb: this.xvfb?.child.exitCode === null ? 'running' : 'stopped',
+      xpra: this.xpra?.child.exitCode === null ? 'running' : 'stopped',
       chromium: this.context === undefined ? 'stopped' : 'running',
-      x11vnc: this.vnc?.child.exitCode === null ? 'running' : 'stopped',
       page: this.page === undefined ? null : { url: this.page.url(), title: await this.page.title().catch(() => '') },
     });
   }
 
-  private spawnOwned(name: string, command: string, args: string[]): ManagedProcess {
-    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DISPLAY: this.config.display } });
-    child.stderr?.setEncoding('utf8');
-    child.stderr?.on('data', (chunk: string) => {
-      for (const line of chunk.split(/\r?\n/u).filter((entry) => entry !== '')) {
-        process.stderr.write(`${JSON.stringify({ ok: false, process: name, log: line })}\n`);
-      }
-    });
-    child.once('error', (cause) => { process.stderr.write(`${JSON.stringify({ ok: false, process: name, error: cause.message })}\n`); });
-    return { child, name };
-  }
 
   private async handle(request: ControlRequest): Promise<ControlResponse> {
     try {
