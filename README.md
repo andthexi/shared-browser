@@ -2,6 +2,28 @@
 
 Shared Chromium instance exposed through a localhost-only native VNC server.
 
+## Quick start
+
+```bash
+npm install
+npx playwright install chromium
+npm run link:local
+shared-browser start
+```
+
+All CLI commands emit JSON. The supervisor remains in the foreground; use another shell for control
+commands:
+
+```bash
+shared-browser status
+shared-browser open-url https://example.com
+shared-browser inspect
+shared-browser stop
+```
+
+The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
+explicit file uploads, but submit-like or ambiguous clicks are rejected.
+
 ## Planned runtime architecture
 
 ```text
@@ -26,7 +48,7 @@ Tailscale configuration. Tailscale Serve is configured separately by the operato
 | `node` | Application runtime | Node.js 22 or newer |
 | `npm` | Dependency installation and project commands | npm 10 or newer |
 | `Xvfb` | Headless X11 display | Provides the virtual display Chromium uses |
-| Chromium executable | Browser runtime | Configure the executable path through the application environment |
+| Playwright-managed Chromium | Browser runtime | Install explicitly with `npx playwright install chromium` |
 | `x11vnc` | Native VNC server | Attaches to the Xvfb display and listens on localhost only |
 
 ## External deployment binary
@@ -71,3 +93,9 @@ x11vnc -version
 - VNC must bind to `127.0.0.1`, never `0.0.0.0`.
 - Tailscale Serve remains a separate command/service boundary.
 - The application must never submit forms automatically; form submission remains manual.
+
+## Hermes skill
+
+The reusable Hermes skill lives in the separate shared configuration repository at
+`agents-config/.agents/skills/shared-browser/SKILL.md` and is loaded through Hermes's configured
+external skill directory.
