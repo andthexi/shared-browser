@@ -11,7 +11,13 @@ npm run link:local
 shared-browser start
 ```
 
-`shared-browser start` keeps the supervisor in the foreground. To access the session through Tailscale, forward the Xpra HTTP endpoint rather than a VNC port:
+The default display is `1920x1080`. For smaller phone viewing, use Xpra HTML5's client-side width
+override without changing the server display:
+
+```text
+https://<tailscale-hostname>:<tailnet-port>/?override_width=1280
+```
+
 
 ```bash
 tailscale serve --http=<tailnet-port> http://127.0.0.1:<xpra-port>
