@@ -5,6 +5,7 @@ import { chromium, type BrowserContext, type Locator, type Page } from 'playwrig
 
 import type { BrowserConfig } from './config.js';
 import { displayNumber } from './config.js';
+import { classifyCookieConsentCandidate, withCookieConsentRetry } from './cookie-consent.js';
 import { classifyClickSafety } from './safety.js';
 import { ControlServer, probeTcpPort, type ControlRequest, type ControlResponse } from './socket.js';
 import { OpportunityTabs, type TabPage } from './tabs.js';
@@ -116,6 +117,28 @@ class PlaywrightTabPage implements TabPage {
   async title(): Promise<string> { return this.page.title(); }
   async close(): Promise<void> { await this.page.close(); }
   async bringToFront(): Promise<void> { await this.page.bringToFront(); }
+  async acceptCookieConsent(): Promise<boolean> {
+    for (const frame of this.page.frames()) {
+      const controls = frame.getByRole('button').or(frame.getByRole('link'));
+      const count = await controls.count().catch(() => 0);
+      for (let index = 0; index < Math.min(count, 100); index += 1) {
+        const control = controls.nth(index);
+        if (!(await control.isVisible().catch(() => false))) continue;
+        const label = (await control.getAttribute('aria-label').catch(() => null))
+          ?? (await control.innerText().catch(() => ''));
+        const context = await control.evaluate((node) => {
+          const element = node as HTMLElement;
+          const container = element.closest('[role="dialog"],dialog,[class*="cookie" i],[id*="cookie" i],[class*="consent" i],[id*="consent" i]');
+          return (container?.textContent ?? '').slice(0, 5_000);
+        }).catch(() => '');
+        if (!classifyCookieConsentCandidate({ label, context })) continue;
+        await control.click({ timeout: this.pageLoadTimeoutMs, noWaitAfter: true });
+        await this.page.waitForLoadState('domcontentloaded', { timeout: this.pageLoadTimeoutMs }).catch(() => undefined);
+        return true;
+      }
+    }
+    return false;
+  }
   async inspectIdentity(): Promise<{ title: string; text: string; forms: Array<{ id: string; name: string; action: string; ariaLabel: string; text: string }> }> {
     return this.page.evaluate(() => ({
       title: document.title,
@@ -231,12 +254,26 @@ export class SharedBrowser {
       if (this.tabs === undefined) return error('browser tabs are not ready');
       if (request.op === 'list-tabs') return success('list-tabs', { tabs: await this.tabs.list() });
       if (request.op === 'list-unbound-tabs') return success('list-unbound-tabs', { tabs: await this.tabs.listUnbound() });
-      if (request.op === 'open-url') return this.tabs.open(request.tabId, request.url);
+      if (request.op === 'open-url') {
+        const opened = await this.tabs.open(request.tabId, request.url);
+        if (!opened.ok) return opened;
+        const selected = await this.tabs.require(request.tabId);
+        if (selected.ok) await selected.page.acceptCookieConsent();
+        return opened;
+      }
       if (request.op === 'close-tab') return this.tabs.close(request.tabId);
-      if (request.op === 'rebind-tab') return this.tabs.rebind(request);
+      if (request.op === 'rebind-tab') {
+        const rebound = await this.tabs.rebind(request);
+        if (!rebound.ok) return rebound;
+        const selected = await this.tabs.require(request.tabId);
+        if (selected.ok) await selected.page.acceptCookieConsent();
+        return rebound;
+      }
       if (request.op === 'inspect') {
         const selected = await this.tabs.require(request.tabId);
-        return selected.ok ? success('inspect', await pageMetadata((selected.page as PlaywrightTabPage).page)) : selected;
+        if (!selected.ok) return selected;
+        await selected.page.acceptCookieConsent();
+        return success('inspect', await pageMetadata((selected.page as PlaywrightTabPage).page));
       }
       if (request.op === 'click') return this.click(request);
       if (request.op === 'fill') return this.fill(request);
@@ -247,24 +284,27 @@ export class SharedBrowser {
   private async click(request: ControlRequest): Promise<ControlResponse> {
     if (this.tabs === undefined) return error('browser tabs are not ready');
     const scoped = await this.tabs.run(request.tabId, request.expectedOrigin, async (tab) => {
-    const page = (tab as PlaywrightTabPage).page;
+    const browserTab = tab as PlaywrightTabPage;
+    const page = browserTab.page;
     const target = targetValue(request);
-    const selected = locator(page, target);
-    const metadata = await selected.evaluate((node) => {
-      const element = node as HTMLElement & { type?: string };
-      return { tagName: element.tagName, type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
-    });
-    const safety = classifyClickSafety(metadata);
-    if (!safety.ok) return error(safety.reason);
-    const popup = this.context?.waitForEvent('page', { timeout: this.config.actionTimeoutMs }).catch(() => undefined);
-    await withAgentGuard(page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
-    const openedPage = await popup;
-    if (openedPage !== undefined) {
-      await openedPage.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
-      await openedPage.close().catch(() => undefined);
-    }
-    await page.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
-    return { target: targetDescription(target), url: page.url(), title: await page.title() };
+    return withCookieConsentRetry(async () => {
+      const selected = locator(page, target);
+      const metadata = await selected.evaluate((node) => {
+        const element = node as HTMLElement & { type?: string };
+        return { tagName: element.tagName, type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
+      });
+      const safety = classifyClickSafety(metadata);
+      if (!safety.ok) return error(safety.reason);
+      const popup = this.context?.waitForEvent('page', { timeout: this.config.actionTimeoutMs }).catch(() => undefined);
+      await withAgentGuard(page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
+      const openedPage = await popup;
+      if (openedPage !== undefined) {
+        await openedPage.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
+        await openedPage.close().catch(() => undefined);
+      }
+      await page.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
+      return { target: targetDescription(target), url: page.url(), title: await page.title() };
+    }, () => browserTab.acceptCookieConsent());
     });
     return scoped.ok ? success('click', scoped.value as Record<string, unknown>) : scoped;
   }
@@ -272,25 +312,28 @@ export class SharedBrowser {
   private async fill(request: ControlRequest): Promise<ControlResponse> {
     if (this.tabs === undefined) return error('browser tabs are not ready');
     const scoped = await this.tabs.run(request.tabId, request.expectedOrigin, async (tab) => {
-    const page = (tab as PlaywrightTabPage).page;
+    const browserTab = tab as PlaywrightTabPage;
+    const page = browserTab.page;
     const fields = request.fields;
     if (!Array.isArray(fields)) return error('fields must be an array');
-    const completed: string[] = [];
-    for (const field of fields) {
-      if (field === null || typeof field !== 'object' || Array.isArray(field)) return error('each field must be an object');
-      const item = field as Record<string, unknown>;
-      const target = item.target as Target;
-      const selected = locator(page, target);
-      await withAgentGuard(page, async () => {
-        if (typeof item.filePath === 'string') await selected.setInputFiles(item.filePath, { timeout: this.config.actionTimeoutMs });
-        else if (item.select === true && typeof item.value === 'string') await selected.selectOption(item.value, { timeout: this.config.actionTimeoutMs });
-        else if (typeof item.checked === 'boolean') await selected.setChecked(item.checked, { timeout: this.config.actionTimeoutMs });
-        else if (typeof item.value === 'string') await selected.fill(item.value, { timeout: this.config.actionTimeoutMs });
-        else throw new Error('field requires value, checked, or filePath');
-      });
-      completed.push(targetDescription(target));
-    }
-    return { fields: completed };
+    return withCookieConsentRetry(async () => {
+      const completed: string[] = [];
+      for (const field of fields) {
+        if (field === null || typeof field !== 'object' || Array.isArray(field)) return error('each field must be an object');
+        const item = field as Record<string, unknown>;
+        const target = item.target as Target;
+        const selected = locator(page, target);
+        await withAgentGuard(page, async () => {
+          if (typeof item.filePath === 'string') await selected.setInputFiles(item.filePath, { timeout: this.config.actionTimeoutMs });
+          else if (item.select === true && typeof item.value === 'string') await selected.selectOption(item.value, { timeout: this.config.actionTimeoutMs });
+          else if (typeof item.checked === 'boolean') await selected.setChecked(item.checked, { timeout: this.config.actionTimeoutMs });
+          else if (typeof item.value === 'string') await selected.fill(item.value, { timeout: this.config.actionTimeoutMs });
+          else throw new Error('field requires value, checked, or filePath');
+        });
+        completed.push(targetDescription(target));
+      }
+      return { fields: completed };
+    }, () => browserTab.acceptCookieConsent());
     });
     return scoped.ok ? success('fill', scoped.value as Record<string, unknown>) : scoped;
   }

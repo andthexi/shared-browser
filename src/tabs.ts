@@ -7,6 +7,7 @@ export interface TabPage {
   title(): Promise<string>;
   close(): Promise<void>;
   bringToFront(): Promise<void>;
+  acceptCookieConsent(): Promise<boolean>;
   inspectIdentity(): Promise<{
     title: string;
     text: string;

@@ -18,6 +18,7 @@ class FakePage implements TabPage {
   async title(): Promise<string> { return this.metadata.title; }
   async close(): Promise<void> { this.closed = true; }
   async bringToFront(): Promise<void> {}
+  async acceptCookieConsent(): Promise<boolean> { return false; }
   async inspectIdentity(): Promise<typeof this.metadata> { return this.metadata; }
 }
 
