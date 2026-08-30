@@ -16,10 +16,16 @@ commands:
 
 ```bash
 shared-browser status
-shared-browser open-url https://example.com
-shared-browser inspect
-shared-browser stop
+shared-browser list-tabs
+shared-browser list-unbound-tabs
+shared-browser open-url <tabId> https://example.com
+shared-browser inspect <tabId>
+shared-browser click <tabId> https://example.com '{"role":"button","name":"Show form"}'
+shared-browser fill <tabId> https://example.com '[{"target":{"label":"Name"},"value":"Ada"}]'
+shared-browser close-tab <tabId>
 ```
+
+The browser-control API uses caller-supplied stable `tabId` values, normally the job-search opportunity ID, so independent forms remain isolated in separate tabs. Mutating operations require the expected origin and fail closed on mismatch. Restored pages remain unbound until explicitly re-associated after employer, role, origin, and form identity checks.
 
 The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
 explicit file uploads, but submit-like or ambiguous clicks are rejected.

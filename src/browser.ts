@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 
@@ -6,6 +7,7 @@ import type { BrowserConfig } from './config.js';
 import { displayNumber } from './config.js';
 import { classifyClickSafety } from './safety.js';
 import { ControlServer, probeTcpPort, type ControlRequest, type ControlResponse } from './socket.js';
+import { OpportunityTabs, type TabPage } from './tabs.js';
 
 declare global {
   interface Window { __sharedBrowserAgentAction?: boolean; }
@@ -107,11 +109,33 @@ async function pageMetadata(page: Page): Promise<PageMetadata> {
   return { url: page.url(), title: await page.title(), text: (await page.locator('body').innerText()).slice(0, 20_000), elements };
 }
 
+class PlaywrightTabPage implements TabPage {
+  constructor(readonly page: Page, readonly handle: string, private readonly pageLoadTimeoutMs: number) {}
+  url(): string { return this.page.url(); }
+  async goto(url: string): Promise<unknown> { return this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.pageLoadTimeoutMs }); }
+  async title(): Promise<string> { return this.page.title(); }
+  async close(): Promise<void> { await this.page.close(); }
+  async bringToFront(): Promise<void> { await this.page.bringToFront(); }
+  async inspectIdentity(): Promise<{ title: string; text: string; forms: Array<{ id: string; name: string; action: string; ariaLabel: string; text: string }> }> {
+    return this.page.evaluate(() => ({
+      title: document.title,
+      text: document.body?.innerText?.slice(0, 20_000) ?? '',
+      forms: Array.from(document.forms).map((form) => ({
+        id: form.id,
+        name: form.getAttribute('name') ?? '',
+        action: form.getAttribute('action') ?? '',
+        ariaLabel: form.getAttribute('aria-label') ?? '',
+        text: form.innerText.slice(0, 1_000),
+      })),
+    }));
+  }
+}
+
 export class SharedBrowser {
   private xvfb: ManagedProcess | undefined;
   private vnc: ManagedProcess | undefined;
   private context: BrowserContext | undefined;
-  private page: Page | undefined;
+  private tabs: OpportunityTabs | undefined;
   private server: ControlServer | undefined;
   private stopping = false;
 
@@ -130,8 +154,9 @@ export class SharedBrowser {
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
         env: { ...process.env, DISPLAY: this.config.display },
       });
-      this.page = this.context.pages()[0] ?? await this.context.newPage();
       await this.context.addInitScript({ content: submitGuard });
+      const restored = this.context.pages().map((page, index) => this.tabPage(page, `restored-${index + 1}`));
+      this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()));
       this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
       await this.wait(300);
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
@@ -182,7 +207,8 @@ export class SharedBrowser {
       xvfb: this.xvfb?.child.exitCode === null ? 'running' : 'stopped',
       chromium: this.context === undefined ? 'stopped' : 'running',
       x11vnc: this.vnc?.child.exitCode === null ? 'running' : 'stopped',
-      page: this.page === undefined ? null : { url: this.page.url(), title: await this.page.title().catch(() => '') },
+      tabs: this.tabs === undefined ? [] : await this.tabs.list(),
+      unboundTabs: this.tabs === undefined ? [] : await this.tabs.listUnbound(),
     });
   }
 
@@ -202,26 +228,28 @@ export class SharedBrowser {
     try {
       if (request.op === 'status') return this.statusResponse();
       if (request.op === 'stop') { void this.stop(); return success('stop', { state: 'stopping' }); }
-      if (this.page === undefined) return error('browser page is not ready');
-      if (request.op === 'open-url') return this.openUrl(request.url);
-      if (request.op === 'inspect') return success('inspect', await pageMetadata(this.page));
+      if (this.tabs === undefined) return error('browser tabs are not ready');
+      if (request.op === 'list-tabs') return success('list-tabs', { tabs: await this.tabs.list() });
+      if (request.op === 'list-unbound-tabs') return success('list-unbound-tabs', { tabs: await this.tabs.listUnbound() });
+      if (request.op === 'open-url') return this.tabs.open(request.tabId, request.url);
+      if (request.op === 'close-tab') return this.tabs.close(request.tabId);
+      if (request.op === 'rebind-tab') return this.tabs.rebind(request);
+      if (request.op === 'inspect') {
+        const selected = await this.tabs.require(request.tabId);
+        return selected.ok ? success('inspect', await pageMetadata((selected.page as PlaywrightTabPage).page)) : selected;
+      }
       if (request.op === 'click') return this.click(request);
       if (request.op === 'fill') return this.fill(request);
       return error(`unsupported operation: ${request.op}`);
     } catch (cause) { return error(cause instanceof Error ? cause.message : String(cause)); }
   }
 
-  private async openUrl(value: unknown): Promise<ControlResponse> {
-    if (typeof value !== 'string') return error('url must be a string');
-    const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol)) return error('only http and https URLs are allowed');
-    await this.page?.goto(url.href, { waitUntil: 'domcontentloaded', timeout: this.config.pageLoadTimeoutMs });
-    return success('open-url', { url: this.page?.url(), title: await this.page?.title() });
-  }
-
   private async click(request: ControlRequest): Promise<ControlResponse> {
+    if (this.tabs === undefined) return error('browser tabs are not ready');
+    const scoped = await this.tabs.run(request.tabId, request.expectedOrigin, async (tab) => {
+    const page = (tab as PlaywrightTabPage).page;
     const target = targetValue(request);
-    const selected = locator(this.page as Page, target);
+    const selected = locator(page, target);
     const metadata = await selected.evaluate((node) => {
       const element = node as HTMLElement & { type?: string };
       return { tagName: element.tagName, type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
@@ -229,17 +257,22 @@ export class SharedBrowser {
     const safety = classifyClickSafety(metadata);
     if (!safety.ok) return error(safety.reason);
     const popup = this.context?.waitForEvent('page', { timeout: this.config.actionTimeoutMs }).catch(() => undefined);
-    await withAgentGuard(this.page as Page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
+    await withAgentGuard(page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
     const openedPage = await popup;
     if (openedPage !== undefined) {
-      this.page = openedPage;
       await openedPage.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
+      await openedPage.close().catch(() => undefined);
     }
-    await this.page?.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
-    return success('click', { target: targetDescription(target), url: this.page?.url(), title: await this.page?.title() });
+    await page.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
+    return { target: targetDescription(target), url: page.url(), title: await page.title() };
+    });
+    return scoped.ok ? success('click', scoped.value as Record<string, unknown>) : scoped;
   }
 
   private async fill(request: ControlRequest): Promise<ControlResponse> {
+    if (this.tabs === undefined) return error('browser tabs are not ready');
+    const scoped = await this.tabs.run(request.tabId, request.expectedOrigin, async (tab) => {
+    const page = (tab as PlaywrightTabPage).page;
     const fields = request.fields;
     if (!Array.isArray(fields)) return error('fields must be an array');
     const completed: string[] = [];
@@ -247,8 +280,8 @@ export class SharedBrowser {
       if (field === null || typeof field !== 'object' || Array.isArray(field)) return error('each field must be an object');
       const item = field as Record<string, unknown>;
       const target = item.target as Target;
-      const selected = locator(this.page as Page, target);
-      await withAgentGuard(this.page as Page, async () => {
+      const selected = locator(page, target);
+      await withAgentGuard(page, async () => {
         if (typeof item.filePath === 'string') await selected.setInputFiles(item.filePath, { timeout: this.config.actionTimeoutMs });
         else if (item.select === true && typeof item.value === 'string') await selected.selectOption(item.value, { timeout: this.config.actionTimeoutMs });
         else if (typeof item.checked === 'boolean') await selected.setChecked(item.checked, { timeout: this.config.actionTimeoutMs });
@@ -257,8 +290,12 @@ export class SharedBrowser {
       });
       completed.push(targetDescription(target));
     }
-    return success('fill', { fields: completed });
+    return { fields: completed };
+    });
+    return scoped.ok ? success('fill', scoped.value as Record<string, unknown>) : scoped;
   }
+
+  private tabPage(page: Page, handle: string): PlaywrightTabPage { return new PlaywrightTabPage(page, handle, this.config.pageLoadTimeoutMs); }
 
   private async wait(ms: number): Promise<void> { await new Promise((resolve) => setTimeout(resolve, ms)); }
 }

@@ -4,6 +4,7 @@ import { createConnection } from 'node:net';
 import { resolve } from 'node:path';
 
 import { SharedBrowser } from './browser.js';
+import { commandPayload, usage as commandUsage } from './commands.js';
 import { loadConfig } from './config.js';
 import type { ControlResponse } from './socket.js';
 
@@ -50,7 +51,7 @@ async function request(socketPath: string, payload: Record<string, unknown>): Pr
 }
 
 function usage(): ControlResponse {
-  return { ok: false, error: 'usage: shared-browser <start|stop|status|open-url|inspect|click|fill>' };
+  return { ok: false, error: commandUsage() };
 }
 
 async function main(): Promise<void> {
@@ -73,12 +74,7 @@ async function main(): Promise<void> {
   }
   try {
     const config = loadConfig();
-    const payload: Record<string, unknown> = { op: command };
-    if (command === 'open-url') payload.url = process.argv[3];
-    else if (command === 'inspect' || command === 'status' || command === 'stop') { /* no args */ }
-    else if (command === 'click') payload.target = JSON.parse(process.argv[3] ?? '{}');
-    else if (command === 'fill') payload.fields = JSON.parse(process.argv[3] ?? '[]');
-    else { print(usage()); process.exitCode = 2; return; }
+    const payload = commandPayload(process.argv.slice(2));
     const response = await request(config.socketPath, payload);
     if (!response.ok && (command === 'stop' || command === 'status') && response.error === 'browser service is not running') {
       print({ ok: true, command, state: 'stopped' });
