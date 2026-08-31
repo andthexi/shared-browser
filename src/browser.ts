@@ -291,7 +291,7 @@ export class SharedBrowser {
       const selected = locator(page, target);
       const metadata = await selected.evaluate((node) => {
         const element = node as HTMLElement & { type?: string };
-        return { tagName: element.tagName, type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
+        return { tagName: element.tagName, role: element.getAttribute('role') ?? '', type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
       });
       const safety = classifyClickSafety(metadata);
       if (!safety.ok) return error(safety.reason);

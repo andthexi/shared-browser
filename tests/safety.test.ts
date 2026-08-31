@@ -5,6 +5,8 @@ import { classifyClickSafety } from '../src/safety.js';
 describe('click safety', () => {
   it('allows explicit non-submit controls', () => {
     expect(classifyClickSafety({ tagName: 'BUTTON', type: 'button', insideForm: true, accessibleName: 'Show form' })).toEqual({ ok: true });
+    expect(classifyClickSafety({ tagName: 'BUTTON', type: 'submit', insideForm: false, accessibleName: 'Yes' })).toEqual({ ok: true });
+    expect(classifyClickSafety({ tagName: 'LI', role: 'option', type: '', insideForm: false, accessibleName: 'Lagos, Nigeria' })).toEqual({ ok: true });
     expect(classifyClickSafety({ tagName: 'A', type: '', insideForm: true, accessibleName: 'Next page' })).toEqual({ ok: true });
     expect(classifyClickSafety({ tagName: 'A', type: 'button', insideForm: false, accessibleName: 'Apply now' })).toEqual({ ok: true });
   });
@@ -12,6 +14,7 @@ describe('click safety', () => {
   it('rejects submit-like and ambiguous controls', () => {
     expect(classifyClickSafety({ tagName: 'BUTTON', type: 'submit', insideForm: true, accessibleName: 'Continue' })).toMatchObject({ ok: false });
     expect(classifyClickSafety({ tagName: 'BUTTON', type: '', insideForm: true, accessibleName: 'Open' })).toMatchObject({ ok: false });
+    expect(classifyClickSafety({ tagName: 'DIV', role: '', type: '', insideForm: false, accessibleName: 'Lagos, Nigeria' })).toMatchObject({ ok: false });
     expect(classifyClickSafety({ tagName: 'BUTTON', type: 'button', insideForm: false, accessibleName: 'Submit application' })).toMatchObject({ ok: false });
   });
 });
