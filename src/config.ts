@@ -3,6 +3,8 @@ export interface BrowserConfig {
   display: string;
   profileDir: string;
   socketPath: string;
+  logFile: string;
+  pidFile: string;
   screenWidth: number;
   screenHeight: number;
   screenDepth: number;
@@ -29,6 +31,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BrowserConfig 
     display: required(env, 'DISPLAY'),
     profileDir: required(env, 'BROWSER_PROFILE_DIR'),
     socketPath: required(env, 'BROWSER_CONTROL_SOCKET'),
+    logFile: env.LOG_FILE ?? './runtime/shared-browser.log',
+    pidFile: env.PID_FILE ?? './runtime/shared-browser.pid',
     screenWidth: integer(env, 'SCREEN_WIDTH', 1680, 320),
     screenHeight: integer(env, 'SCREEN_HEIGHT', 945, 240),
     screenDepth: integer(env, 'SCREEN_DEPTH', 24, 24),

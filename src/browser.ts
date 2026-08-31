@@ -9,6 +9,8 @@ import { classifyCookieConsentCandidate, withCookieConsentRetry } from './cookie
 import { classifyClickSafety } from './safety.js';
 import { ControlServer, probeTcpPort, type ControlRequest, type ControlResponse } from './socket.js';
 import { OpportunityTabs, type TabPage } from './tabs.js';
+import { RuntimeLogger } from './logger.js';
+import { removePidFile, writePidFile } from './process-identity.js';
 
 declare global {
   interface Window { __sharedBrowserAgentAction?: boolean; }
@@ -161,10 +163,14 @@ export class SharedBrowser {
   private tabs: OpportunityTabs | undefined;
   private server: ControlServer | undefined;
   private stopping = false;
+  private readonly logger: RuntimeLogger;
 
-  constructor(private readonly config: BrowserConfig) {}
+  constructor(private readonly config: BrowserConfig) { this.logger = new RuntimeLogger(config.logFile); }
 
   async start(): Promise<void> {
+    await this.logger.reset();
+    await writePidFile(this.config.pidFile, process.pid);
+    this.logger.write(`supervisor starting pid=${process.pid}`);
     await probeTcpPort(this.config.vncPort);
     await mkdir(this.config.profileDir, { recursive: true });
     displayNumber(this.config.display);
@@ -177,6 +183,8 @@ export class SharedBrowser {
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
         env: { ...process.env, DISPLAY: this.config.display },
       });
+      this.context.on('close', () => this.logger.write('Chromium closed'));
+      this.logger.write('Chromium started');
       await this.context.addInitScript({ content: submitGuard });
       const restored = this.context.pages().map((page, index) => this.tabPage(page, `restored-${index + 1}`));
       this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()));
@@ -184,12 +192,14 @@ export class SharedBrowser {
       await this.wait(300);
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
       await this.server.start();
-      process.stdout.write(`${JSON.stringify(await this.statusResponse())}\n`);
+      this.logger.write(`supervisor ready display=${this.config.display} vnc_port=${this.config.vncPort}`);
       process.once('SIGINT', () => { void this.stop(); });
       process.once('SIGTERM', () => { void this.stop(); });
       await new Promise<void>((resolve) => { this.resolveStop = resolve; });
     } catch (cause) {
+      this.logger.write(`startup failed: ${cause instanceof Error ? cause.message : String(cause)}`);
       await this.stopChildren();
+      removePidFile(this.config.pidFile);
       throw cause;
     }
 
@@ -203,6 +213,8 @@ export class SharedBrowser {
     await this.server?.stop().catch(() => undefined);
     await this.context?.close().catch(() => undefined);
     await this.stopChildren();
+    removePidFile(this.config.pidFile);
+    this.logger.write('supervisor stopped');
     this.resolveStop?.();
   }
 
@@ -210,10 +222,23 @@ export class SharedBrowser {
     for (const managed of [this.vnc, this.xvfb]) {
       if (managed === undefined) continue;
       if (managed.child.exitCode === null) {
-        managed.child.kill('SIGTERM');
+        const pid = managed.child.pid;
+        if (pid !== undefined && process.platform !== 'win32') {
+          try { process.kill(-pid, 'SIGTERM'); } catch { /* already exited */ }
+        } else {
+          managed.child.kill('SIGTERM');
+        }
         await new Promise<void>((resolve) => {
-          if (managed.child.exitCode !== null) resolve();
-          else managed.child.once('exit', () => resolve());
+          if (managed.child.exitCode !== null) { resolve(); return; }
+          const timer = setTimeout(() => {
+            if (managed.child.exitCode === null) {
+              if (pid !== undefined && process.platform !== 'win32') {
+                try { process.kill(-pid, 'SIGKILL'); } catch { /* already exited */ }
+              } else managed.child.kill('SIGKILL');
+            }
+            resolve();
+          }, 5_000);
+          managed.child.once('exit', () => { clearTimeout(timer); resolve(); });
         });
       }
     }
@@ -227,6 +252,9 @@ export class SharedBrowser {
       display: this.config.display,
       vncPort: this.config.vncPort,
       controlSocket: this.config.socketPath,
+      supervisorPid: process.pid,
+      pidFile: this.config.pidFile,
+      logFile: this.config.logFile,
       xvfb: this.xvfb?.child.exitCode === null ? 'running' : 'stopped',
       chromium: this.context === undefined ? 'stopped' : 'running',
       x11vnc: this.vnc?.child.exitCode === null ? 'running' : 'stopped',
@@ -236,14 +264,18 @@ export class SharedBrowser {
   }
 
   private spawnOwned(name: string, command: string, args: string[]): ManagedProcess {
-    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DISPLAY: this.config.display } });
+    const child = spawn(command, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DISPLAY: this.config.display } });
+    this.logger.write(`${name} started pid=${child.pid ?? 'unknown'}`);
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (chunk: string) => {
       for (const line of chunk.split(/\r?\n/u).filter((entry) => entry !== '')) {
-        process.stderr.write(`${JSON.stringify({ ok: false, process: name, log: line })}\n`);
+        this.logger.write(`${name}: ${line}`);
       }
     });
-    child.once('error', (cause) => { process.stderr.write(`${JSON.stringify({ ok: false, process: name, error: cause.message })}\n`); });
+    child.once('error', (cause) => { this.logger.write(`${name} error: ${cause.message}`); });
+    child.once('exit', (code, signal) => {
+      if (!this.stopping) this.logger.write(`${name} exited code=${code ?? 'null'} signal=${signal ?? 'null'}`);
+    });
     return { child, name };
   }
 

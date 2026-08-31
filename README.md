@@ -11,11 +11,21 @@ npm run link:local
 shared-browser start
 ```
 
-All CLI commands emit JSON. The supervisor remains in the foreground; use another shell for control
-commands:
+`shared-browser logs` returns JSON with the configured log path and lines. `--tail N` limits the
+returned lines; `--follow` streams operational lines until interrupted. The log contains only
+supervisor and child-process lifecycle/stderr output—not page text, form values, or control responses.
+
+The log is reset on each new successful start and defaults to `./runtime/shared-browser.log`.
+The supervisor PID defaults to `./runtime/shared-browser.pid`. Both paths can be overridden with
+`LOG_FILE` and `PID_FILE` in `.env`.
+
+The supervisor runs in the background. Start is idempotent and waits for readiness:
 
 ```bash
+shared-browser start
 shared-browser status
+shared-browser logs --tail 50
+shared-browser logs --follow
 shared-browser list-tabs
 shared-browser list-unbound-tabs
 shared-browser open-url <tabId> https://example.com

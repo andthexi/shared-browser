@@ -9,6 +9,12 @@ describe('CLI command payloads', () => {
     expect(commandPayload(['list-unbound-tabs'])).toEqual({ op: 'list-unbound-tabs' });
   });
 
+  it('parses log tail and follow options', () => {
+    expect(commandPayload(['logs'])).toEqual({ op: 'logs' });
+    expect(commandPayload(['logs', '--tail', '20'])).toEqual({ op: 'logs', tail: 20 });
+    expect(commandPayload(['logs', '--follow'])).toEqual({ op: 'logs', follow: true });
+  });
+
   it('requires tab ids for tab-scoped commands', () => {
     expect(commandPayload(['open-url', 'opp-1', 'https://example.test/job'])).toEqual({ op: 'open-url', tabId: 'opp-1', url: 'https://example.test/job' });
     expect(commandPayload(['inspect', 'opp-1'])).toEqual({ op: 'inspect', tabId: 'opp-1' });

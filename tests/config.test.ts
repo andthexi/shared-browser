@@ -19,6 +19,8 @@ describe('configuration', () => {
       display: ':107',
       profileDir: './runtime/profile',
       socketPath: './runtime/control.sock',
+      logFile: './runtime/shared-browser.log',
+      pidFile: './runtime/shared-browser.pid',
       screenWidth: 1440,
       screenHeight: 900,
       screenDepth: 24,
@@ -36,6 +38,8 @@ describe('configuration', () => {
     })).toMatchObject({
       screenWidth: 1680,
       screenHeight: 945,
+      logFile: './runtime/shared-browser.log',
+      pidFile: './runtime/shared-browser.pid',
       screenDepth: 24,
       pageLoadTimeoutMs: 30_000,
       actionTimeoutMs: 10_000,
