@@ -164,35 +164,44 @@ export class SharedBrowser {
   private server: ControlServer | undefined;
   private stopping = false;
   private readonly logger: RuntimeLogger;
+  private readonly display: string;
 
-  constructor(private readonly config: BrowserConfig) { this.logger = new RuntimeLogger(config.logFile); }
+  constructor(private readonly config: BrowserConfig, private readonly localMode = false, displayOverride?: string) {
+    this.display = displayOverride ?? config.display;
+    this.logger = new RuntimeLogger(config.logFile);
+  }
 
   async start(): Promise<void> {
     await this.logger.reset();
     await writePidFile(this.config.pidFile, process.pid);
     this.logger.write(`supervisor starting pid=${process.pid}`);
-    await probeTcpPort(this.config.vncPort);
+    if (!this.localMode) await probeTcpPort(this.config.vncPort);
     await mkdir(this.config.profileDir, { recursive: true });
-    displayNumber(this.config.display);
-    this.xvfb = this.spawnOwned('Xvfb', 'Xvfb', [this.config.display, '-screen', '0', `${this.config.screenWidth}x${this.config.screenHeight}x${this.config.screenDepth}`, '-nolisten', 'tcp']);
-    await this.wait(300);
+    const display = this.display;
+    if (!this.localMode) {
+      displayNumber(display);
+      this.xvfb = this.spawnOwned('Xvfb', 'Xvfb', [display, '-screen', '0', `${this.config.screenWidth}x${this.config.screenHeight}x${this.config.screenDepth}`, '-nolisten', 'tcp']);
+      await this.wait(300);
+    }
     try {
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
         headless: false,
         viewport: { width: this.config.screenWidth, height: this.config.screenHeight },
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
-        env: { ...process.env, DISPLAY: this.config.display },
+        env: { ...process.env, DISPLAY: display, ...(process.env.XAUTHORITY === undefined ? {} : { XAUTHORITY: process.env.XAUTHORITY }) },
       });
       this.context.on('close', () => this.logger.write('Chromium closed'));
       this.logger.write('Chromium started');
       await this.context.addInitScript({ content: submitGuard });
       const restored = this.context.pages().map((page, index) => this.tabPage(page, `restored-${index + 1}`));
       this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()));
-      this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', this.config.display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
-      await this.wait(300);
+      if (!this.localMode) {
+        this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
+        await this.wait(300);
+      }
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
       await this.server.start();
-      this.logger.write(`supervisor ready display=${this.config.display} vnc_port=${this.config.vncPort}`);
+      this.logger.write(`supervisor ready mode=${this.localMode ? 'local' : 'vnc'} display=${display}`);
       process.once('SIGINT', () => { void this.stop(); });
       process.once('SIGTERM', () => { void this.stop(); });
       await new Promise<void>((resolve) => { this.resolveStop = resolve; });
@@ -249,15 +258,16 @@ export class SharedBrowser {
   async statusResponse(): Promise<ControlResponse> {
     return success('status', {
       state: this.stopping ? 'stopping' : this.server === undefined ? 'starting' : 'running',
-      display: this.config.display,
+      display: this.display,
       vncPort: this.config.vncPort,
+      mode: this.localMode ? 'local' : 'vnc',
       controlSocket: this.config.socketPath,
       supervisorPid: process.pid,
       pidFile: this.config.pidFile,
       logFile: this.config.logFile,
-      xvfb: this.xvfb?.child.exitCode === null ? 'running' : 'stopped',
+      xvfb: this.localMode ? 'not-used' : this.xvfb?.child.exitCode === null ? 'running' : 'stopped',
       chromium: this.context === undefined ? 'stopped' : 'running',
-      x11vnc: this.vnc?.child.exitCode === null ? 'running' : 'stopped',
+      x11vnc: this.localMode ? 'not-used' : this.vnc?.child.exitCode === null ? 'running' : 'stopped',
       tabs: this.tabs === undefined ? [] : await this.tabs.list(),
       unboundTabs: this.tabs === undefined ? [] : await this.tabs.listUnbound(),
     });

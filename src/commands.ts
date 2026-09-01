@@ -1,4 +1,4 @@
-const usageMessage = 'usage: shared-browser <start|stop|status|logs|list-tabs|list-unbound-tabs|open-url|inspect|click|fill|close-tab|rebind-tab>';
+const usageMessage = 'usage: shared-browser <start [--local]|stop|status|logs|list-tabs|list-unbound-tabs|open-url|inspect|click|fill|close-tab|rebind-tab>';
 
 function required(args: string[], index: number): string {
   const value = args[index];
@@ -8,6 +8,7 @@ function required(args: string[], index: number): string {
 
 export function commandPayload(args: string[]): Record<string, unknown> {
   const command = required(args, 0);
+  if (command === 'start') return { op: 'start', local: args.includes('--local') };
   if (['status', 'stop', 'list-tabs', 'list-unbound-tabs'].includes(command)) return { op: command };
   if (command === 'logs') {
     const payload: Record<string, unknown> = { op: 'logs' };

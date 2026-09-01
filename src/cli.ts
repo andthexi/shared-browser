@@ -68,11 +68,14 @@ async function waitForStatus(socketPath: string, predicate: (response: ControlRe
 function usage(): ControlResponse { return { ok: false, error: commandUsage() }; }
 
 async function runSupervisor(): Promise<void> {
-  const browser = new SharedBrowser(loadConfig());
+  const localMode = process.env.SHARED_BROWSER_LOCAL === '1';
+  const localDisplay = process.env.SHARED_BROWSER_DISPLAY;
+  if (localMode && (localDisplay === undefined || localDisplay.trim() === '')) throw new Error('local mode requires an inherited DISPLAY');
+  const browser = new SharedBrowser(loadConfig(), localMode, localMode ? localDisplay : undefined);
   await browser.start();
 }
 
-async function startBackground(): Promise<void> {
+async function startBackground(localMode: boolean, inheritedDisplay?: string): Promise<void> {
   const config = loadConfig();
   const current = await request(config.socketPath, { op: 'status' });
   if (current.ok) { print(current); return; }
@@ -87,16 +90,24 @@ async function startBackground(): Promise<void> {
     removePidFile(config.pidFile);
   }
 
+  if (localMode && (inheritedDisplay === undefined || inheritedDisplay.trim() === '')) {
+    print({ ok: false, error: 'local mode requires an inherited DISPLAY; set DISPLAY in the launching environment' });
+    process.exitCode = 1;
+    return;
+  }
+
   const child = spawn(process.execPath, [process.argv[1]!, 'start', '--supervisor'], {
     detached: true,
     stdio: 'ignore',
     cwd: process.cwd(),
-    env: process.env,
+    env: { ...process.env, SHARED_BROWSER_LOCAL: localMode ? '1' : '0', ...(localMode ? { SHARED_BROWSER_DISPLAY: inheritedDisplay } : {}) },
   });
   child.unref();
 
   const ready = await waitForStatus(config.socketPath, (response) => response.ok && response.state === 'running'
-    && response.xvfb === 'running' && response.chromium === 'running' && response.x11vnc === 'running', 15_000);
+    && response.chromium === 'running'
+    && (localMode ? response.mode === 'local' && response.xvfb === 'not-used' && response.x11vnc === 'not-used'
+      : response.mode === 'vnc' && response.xvfb === 'running' && response.x11vnc === 'running'), 15_000);
   if (ready !== undefined) { print(ready); return; }
   const log = new RuntimeLogger(config.logFile);
   print({ ok: false, error: `shared-browser did not become ready within 15 seconds; inspect ${config.logFile}`, log: log.readTail(20) });
@@ -137,6 +148,7 @@ async function showLogs(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const inheritedDisplay = process.env.DISPLAY;
   loadDotEnv();
   const command = process.argv[2];
   if (command === undefined) { print(usage()); process.exitCode = 2; return; }
@@ -146,7 +158,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'start') {
-    try { await startBackground(); }
+    try { await startBackground(process.argv.slice(3).includes('--local'), inheritedDisplay); }
     catch (cause) { print({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }); process.exitCode = 1; }
     return;
   }

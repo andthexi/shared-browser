@@ -27,7 +27,7 @@ function integer(env: NodeJS.ProcessEnv, name: string, defaultValue: number, min
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BrowserConfig {
   return {
-    vncPort: integer(env, 'VNC_PORT', Number.NaN, 1),
+    vncPort: integer(env, 'VNC_PORT', 5900, 1),
     display: required(env, 'DISPLAY'),
     profileDir: required(env, 'BROWSER_PROFILE_DIR'),
     socketPath: required(env, 'BROWSER_CONTROL_SOCKET'),

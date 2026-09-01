@@ -46,8 +46,9 @@ describe('configuration', () => {
     });
   });
 
-  it('rejects missing and invalid values', () => {
+  it('rejects invalid values', () => {
     expect(() => loadConfig({
+      VNC_PORT: 'bad',
       DISPLAY: ':99',
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
@@ -59,5 +60,13 @@ describe('configuration', () => {
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
       SCREEN_DEPTH: '17',
     })).toThrow('SCREEN_DEPTH');
+  });
+
+  it('defaults VNC_PORT when omitted', () => {
+    expect(loadConfig({
+      DISPLAY: ':99',
+      BROWSER_PROFILE_DIR: './runtime/profile',
+      BROWSER_CONTROL_SOCKET: './runtime/control.sock',
+    }).vncPort).toBe(5900);
   });
 });

@@ -15,6 +15,11 @@ describe('CLI command payloads', () => {
     expect(commandPayload(['logs', '--follow'])).toEqual({ op: 'logs', follow: true });
   });
 
+  it('parses local start mode', () => {
+    expect(commandPayload(['start'])).toEqual({ op: 'start', local: false });
+    expect(commandPayload(['start', '--local'])).toEqual({ op: 'start', local: true });
+  });
+
   it('requires tab ids for tab-scoped commands', () => {
     expect(commandPayload(['open-url', 'opp-1', 'https://example.test/job'])).toEqual({ op: 'open-url', tabId: 'opp-1', url: 'https://example.test/job' });
     expect(commandPayload(['inspect', 'opp-1'])).toEqual({ op: 'inspect', tabId: 'opp-1' });
