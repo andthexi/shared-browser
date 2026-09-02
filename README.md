@@ -19,6 +19,10 @@ The log is reset on each new successful start and defaults to `./runtime/shared-
 The supervisor PID defaults to `./runtime/shared-browser.pid`. Both paths can be overridden with
 `LOG_FILE` and `PID_FILE` in `.env`.
 
+The CLI loads the repository-root `.env`, not the `.env` in the directory where it is invoked. Relative
+profile, socket, log, and PID paths are also anchored to the project root, so `shared-browser status`
+and `shared-browser start` work from another directory.
+
 The supervisor runs in the background. Start is idempotent and waits for readiness:
 
 ```bash

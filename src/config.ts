@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 export interface BrowserConfig {
   vncPort: number;
   display: string | null;
@@ -25,14 +27,20 @@ function integer(env: NodeJS.ProcessEnv, name: string, defaultValue: number, min
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, options: { localMode?: boolean } = {}): BrowserConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, options: { localMode?: boolean; rootDir?: string } = {}): BrowserConfig {
+  const rootDir = options.rootDir ?? process.cwd();
+  const pathValue = (name: string, fallback?: string): string => {
+    const value = env[name] ?? fallback;
+    if (value === undefined || value.trim() === '') throw new Error(`missing environment variable: ${name}`);
+    return resolve(rootDir, value);
+  };
   return {
     vncPort: integer(env, 'VNC_PORT', 5900, 1),
     display: options.localMode === true ? null : required(env, 'DISPLAY'),
-    profileDir: required(env, 'BROWSER_PROFILE_DIR'),
-    socketPath: required(env, 'BROWSER_CONTROL_SOCKET'),
-    logFile: env.LOG_FILE ?? './runtime/shared-browser.log',
-    pidFile: env.PID_FILE ?? './runtime/shared-browser.pid',
+    profileDir: pathValue('BROWSER_PROFILE_DIR'),
+    socketPath: pathValue('BROWSER_CONTROL_SOCKET'),
+    logFile: pathValue('LOG_FILE', './runtime/shared-browser.log'),
+    pidFile: pathValue('PID_FILE', './runtime/shared-browser.pid'),
     screenWidth: integer(env, 'SCREEN_WIDTH', 1680, 320),
     screenHeight: integer(env, 'SCREEN_HEIGHT', 945, 240),
     screenDepth: integer(env, 'SCREEN_DEPTH', 24, 24),

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createConnection as connectSocket } from 'node:net';
 
 import { nativeBrowserEnv, SharedBrowser } from './browser.js';
@@ -11,8 +12,10 @@ import { RuntimeLogger } from './logger.js';
 import { processIsSharedBrowser, readPidFile, removePidFile } from './process-identity.js';
 import type { ControlResponse } from './socket.js';
 
+const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
 function loadDotEnv(): void {
-  const path = resolve('.env');
+  const path = resolve(repositoryRoot, '.env');
   if (!existsSync(path)) return;
   for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/u)) {
     const line = rawLine.trim();
@@ -69,12 +72,12 @@ function usage(): ControlResponse { return { ok: false, error: commandUsage() };
 
 async function runSupervisor(): Promise<void> {
   const localMode = process.env.SHARED_BROWSER_LOCAL === '1';
-  const browser = new SharedBrowser(loadConfig(process.env, { localMode }), localMode);
+  const browser = new SharedBrowser(loadConfig(process.env, { localMode, rootDir: repositoryRoot }), localMode);
   await browser.start();
 }
 
 async function startBackground(localMode: boolean): Promise<void> {
-  const config = loadConfig(process.env, { localMode });
+  const config = loadConfig(process.env, { localMode, rootDir: repositoryRoot });
   const current = await request(config.socketPath, { op: 'status' });
   if (current.ok) { print(current); return; }
 
@@ -92,7 +95,7 @@ async function startBackground(localMode: boolean): Promise<void> {
   const child = spawn(process.execPath, [process.argv[1]!, 'start', '--supervisor'], {
     detached: true,
     stdio: 'ignore',
-    cwd: process.cwd(),
+    cwd: repositoryRoot,
     env: { ...(localMode ? nativeBrowserEnv(process.env) : process.env), SHARED_BROWSER_LOCAL: localMode ? '1' : '0' },
   });
   child.unref();
@@ -108,7 +111,7 @@ async function startBackground(localMode: boolean): Promise<void> {
 }
 
 async function stopService(): Promise<void> {
-  const config = loadConfig();
+  const config = loadConfig(process.env, { rootDir: repositoryRoot });
   const response = await request(config.socketPath, { op: 'stop' });
   if (!response.ok && response.error !== 'browser service is not running') { print(response); process.exitCode = 1; return; }
   const stopped = await waitForStatus(config.socketPath, (candidate) => !candidate.ok && candidate.error === 'browser service is not running', 10_000);
@@ -122,7 +125,7 @@ async function stopService(): Promise<void> {
 }
 
 async function showLogs(args: string[]): Promise<void> {
-  const config = loadConfig();
+  const config = loadConfig(process.env, { rootDir: repositoryRoot });
   const payload = commandPayload(args);
   const tail = typeof payload.tail === 'number' ? payload.tail : undefined;
   const logger = new RuntimeLogger(config.logFile);
@@ -160,7 +163,7 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const config = loadConfig();
+    const config = loadConfig(process.env, { rootDir: repositoryRoot });
     if (command === 'logs') { await showLogs(process.argv.slice(2)); return; }
     if (command === 'stop') { await stopService(); return; }
     const payload = commandPayload(process.argv.slice(2));

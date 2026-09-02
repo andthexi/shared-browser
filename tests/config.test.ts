@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolve } from 'node:path';
 
 import { loadConfig } from '../src/config.js';
 
@@ -17,10 +18,10 @@ describe('configuration', () => {
     })).toEqual({
       vncPort: 5907,
       display: ':107',
-      profileDir: './runtime/profile',
-      socketPath: './runtime/control.sock',
-      logFile: './runtime/shared-browser.log',
-      pidFile: './runtime/shared-browser.pid',
+      profileDir: resolve('.', 'runtime/profile'),
+      socketPath: resolve('.', 'runtime/control.sock'),
+      logFile: resolve('.', 'runtime/shared-browser.log'),
+      pidFile: resolve('.', 'runtime/shared-browser.pid'),
       screenWidth: 1440,
       screenHeight: 900,
       screenDepth: 24,
@@ -38,8 +39,8 @@ describe('configuration', () => {
     })).toMatchObject({
       screenWidth: 1680,
       screenHeight: 945,
-      logFile: './runtime/shared-browser.log',
-      pidFile: './runtime/shared-browser.pid',
+      logFile: resolve('.', 'runtime/shared-browser.log'),
+      pidFile: resolve('.', 'runtime/shared-browser.pid'),
       screenDepth: 24,
       pageLoadTimeoutMs: 30_000,
       actionTimeoutMs: 10_000,
@@ -75,5 +76,17 @@ describe('configuration', () => {
       BROWSER_PROFILE_DIR: './runtime/profile',
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
     }, { localMode: true }).display).toBeNull();
+  });
+
+  it('anchors relative runtime paths to the configured root', () => {
+    const config = loadConfig({
+      DISPLAY: ':99',
+      BROWSER_PROFILE_DIR: './runtime/profile',
+      BROWSER_CONTROL_SOCKET: './runtime/control.sock',
+    }, { rootDir: '/repo' });
+    expect(config.profileDir).toBe('/repo/runtime/profile');
+    expect(config.socketPath).toBe('/repo/runtime/control.sock');
+    expect(config.logFile).toBe('/repo/runtime/shared-browser.log');
+    expect(config.pidFile).toBe('/repo/runtime/shared-browser.pid');
   });
 });
