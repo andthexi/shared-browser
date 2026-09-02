@@ -194,7 +194,7 @@ export class SharedBrowser {
     try {
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
         headless: false,
-        viewport: { width: this.config.screenWidth, height: this.config.screenHeight },
+        viewport: this.localMode ? null : { width: this.config.screenWidth, height: this.config.screenHeight },
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
         env: this.localMode ? nativeBrowserEnv(process.env) : { ...process.env, DISPLAY: display! },
       });

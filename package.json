@@ -18,7 +18,7 @@
     "link:local": "npm run build && npm link"
   },
   "dependencies": {
-    "playwright": "^1.56.1"
+    "playwright": "^1.62.1"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
