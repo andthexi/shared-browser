@@ -64,6 +64,10 @@ export function nativeBrowserEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
+export function chromiumLaunchArgs(): string[] {
+  return ['--no-first-run', '--no-default-browser-check', '--restore-last-session', '--disable-blink-features=AutomationControlled'];
+}
+
 function targetValue(request: ControlRequest): Target {
   const target = request.target;
   if (target === null || typeof target !== 'object' || Array.isArray(target)) throw new Error('target must be an object');
@@ -195,7 +199,7 @@ export class SharedBrowser {
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
         headless: false,
         viewport: this.localMode ? null : { width: this.config.screenWidth, height: this.config.screenHeight },
-        args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
+        args: chromiumLaunchArgs(),
         env: this.localMode ? nativeBrowserEnv(process.env) : { ...process.env, DISPLAY: display! },
       });
       this.context.on('close', () => this.logger.write('Chromium closed'));
