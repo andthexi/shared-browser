@@ -43,6 +43,10 @@ shared-browser close-tab <tabId>
 
 The browser-control API uses caller-supplied stable `tabId` values, normally the job-search opportunity ID, so independent forms remain isolated in separate tabs. Mutating operations require the expected origin and fail closed on mismatch. Restored pages remain unbound until explicitly re-associated after employer, role, origin, and form identity checks.
 
+`BRING_TABS_TO_FRONT` defaults to `true`, preserving the existing behavior where `click` and `fill`
+activate the browser window before acting. Set it to `false` (or `0`) in `.env` to keep the browser
+window in the background while performing those actions. Restart the service after changing it.
+
 The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
 explicit file uploads, but submit-like or ambiguous clicks are rejected.
 

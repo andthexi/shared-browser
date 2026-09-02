@@ -12,6 +12,7 @@ export interface BrowserConfig {
   screenDepth: number;
   pageLoadTimeoutMs: number;
   actionTimeoutMs: number;
+  bringTabsToFront: boolean;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -25,6 +26,13 @@ function integer(env: NodeJS.ProcessEnv, name: string, defaultValue: number, min
   const value = Number(raw);
   if (!Number.isInteger(value) || value < minimum) throw new Error(`invalid environment variable: ${name}`);
   return value;
+}
+
+function booleanValue(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
+  const raw = env[name] ?? String(defaultValue);
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  throw new Error(`invalid environment variable: ${name}`);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, options: { localMode?: boolean; rootDir?: string } = {}): BrowserConfig {
@@ -46,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, options: { loca
     screenDepth: integer(env, 'SCREEN_DEPTH', 24, 24),
     pageLoadTimeoutMs: integer(env, 'PAGE_LOAD_TIMEOUT_MS', 30_000, 1),
     actionTimeoutMs: integer(env, 'ACTION_TIMEOUT_MS', 10_000, 1),
+    bringTabsToFront: booleanValue(env, 'BRING_TABS_TO_FRONT', true),
   };
 }
 

@@ -71,6 +71,7 @@ export class OpportunityTabs {
   constructor(
     private readonly unbound: TabPage[],
     private readonly createPage: () => Promise<TabPage>,
+    private readonly bringTabsToFront = true,
   ) {}
 
   async open(tabIdValue: unknown, urlValue: unknown): Promise<TabResult<{ tabId: string; pageHandle: string; url: string; title: string; reused: boolean }>> {
@@ -180,7 +181,7 @@ export class OpportunityTabs {
     return this.lock(tabId).run(async () => {
       const result = await this.require(tabId, expectedOrigin);
       if (!result.ok) return result;
-      await result.page.bringToFront();
+      if (this.bringTabsToFront) await result.page.bringToFront();
       return { ok: true, value: await action(result.page) };
     });
   }

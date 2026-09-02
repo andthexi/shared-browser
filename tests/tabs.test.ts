@@ -4,6 +4,7 @@ import { OpportunityTabs, type TabPage } from '../src/tabs.js';
 
 class FakePage implements TabPage {
   closed = false;
+  bringToFrontCalls = 0;
   constructor(
     readonly handle: string,
     private currentUrl: string,
@@ -17,7 +18,7 @@ class FakePage implements TabPage {
   async goto(url: string): Promise<void> { this.currentUrl = url; }
   async title(): Promise<string> { return this.metadata.title; }
   async close(): Promise<void> { this.closed = true; }
-  async bringToFront(): Promise<void> {}
+  async bringToFront(): Promise<void> { this.bringToFrontCalls += 1; }
   async acceptCookieConsent(): Promise<boolean> { return false; }
   async inspectIdentity(): Promise<typeof this.metadata> { return this.metadata; }
 }
@@ -165,5 +166,33 @@ describe('opportunity-scoped tabs', () => {
     releaseA();
     await Promise.all([a1, a2, b]);
     expect(events).toEqual(['a1-start', 'b', 'a1-end', 'a2']);
+  });
+
+  it('can skip bringing tabs to the front', async () => {
+    const created: FakePage[] = [];
+    const tabs = new OpportunityTabs([], async () => {
+      const result = page(`page-${created.length + 1}`, 'about:blank');
+      created.push(result);
+      return result;
+    }, false);
+
+    await tabs.open('opp-1', 'https://jobs.example.test/job');
+    await tabs.run('opp-1', 'https://jobs.example.test', async () => undefined);
+
+    expect(created[0]?.bringToFrontCalls).toBe(0);
+  });
+
+  it('brings tabs to the front by default', async () => {
+    const created: FakePage[] = [];
+    const tabs = new OpportunityTabs([], async () => {
+      const result = page(`page-${created.length + 1}`, 'about:blank');
+      created.push(result);
+      return result;
+    });
+
+    await tabs.open('opp-1', 'https://jobs.example.test/job');
+    await tabs.run('opp-1', 'https://jobs.example.test', async () => undefined);
+
+    expect(created[0]?.bringToFrontCalls).toBe(1);
   });
 });

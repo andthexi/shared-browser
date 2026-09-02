@@ -206,7 +206,7 @@ export class SharedBrowser {
       this.logger.write('Chromium started');
       await this.context.addInitScript({ content: submitGuard });
       const restored = this.context.pages().map((page, index) => this.tabPage(page, `restored-${index + 1}`));
-      this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()));
+      this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()), this.config.bringTabsToFront);
       if (!this.localMode) {
         this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', display!, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
         await this.wait(300);

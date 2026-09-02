@@ -27,6 +27,7 @@ describe('configuration', () => {
       screenDepth: 24,
       pageLoadTimeoutMs: 45000,
       actionTimeoutMs: 12000,
+      bringTabsToFront: true,
     });
   });
 
@@ -44,6 +45,7 @@ describe('configuration', () => {
       screenDepth: 24,
       pageLoadTimeoutMs: 30_000,
       actionTimeoutMs: 10_000,
+      bringTabsToFront: true,
     });
   });
 
@@ -61,6 +63,21 @@ describe('configuration', () => {
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
       SCREEN_DEPTH: '17',
     })).toThrow('SCREEN_DEPTH');
+    expect(() => loadConfig({
+      DISPLAY: ':99',
+      BROWSER_PROFILE_DIR: './runtime/profile',
+      BROWSER_CONTROL_SOCKET: './runtime/control.sock',
+      BRING_TABS_TO_FRONT: 'maybe',
+    })).toThrow('BRING_TABS_TO_FRONT');
+  });
+
+  it('allows disabling tab activation', () => {
+    expect(loadConfig({
+      DISPLAY: ':99',
+      BROWSER_PROFILE_DIR: './runtime/profile',
+      BROWSER_CONTROL_SOCKET: './runtime/control.sock',
+      BRING_TABS_TO_FRONT: 'false',
+    }).bringTabsToFront).toBe(false);
   });
 
   it('defaults VNC_PORT when omitted', () => {
