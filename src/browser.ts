@@ -57,6 +57,13 @@ type PageMetadata = {
 function error(message: string): ControlResponse { return { ok: false, error: message }; }
 function success(command: string, data: Record<string, unknown> = {}): ControlResponse { return { ok: true, command, ...data }; }
 
+export function nativeBrowserEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result = { ...env };
+  delete result.DISPLAY;
+  delete result.XAUTHORITY;
+  return result;
+}
+
 function targetValue(request: ControlRequest): Target {
   const target = request.target;
   if (target === null || typeof target !== 'object' || Array.isArray(target)) throw new Error('target must be an object');
@@ -164,7 +171,7 @@ export class SharedBrowser {
   private server: ControlServer | undefined;
   private stopping = false;
   private readonly logger: RuntimeLogger;
-  private readonly display: string;
+  private readonly display: string | null;
 
   constructor(private readonly config: BrowserConfig, private readonly localMode = false, displayOverride?: string) {
     this.display = displayOverride ?? config.display;
@@ -179,6 +186,7 @@ export class SharedBrowser {
     await mkdir(this.config.profileDir, { recursive: true });
     const display = this.display;
     if (!this.localMode) {
+      if (display === null) throw new Error('remote mode requires DISPLAY');
       displayNumber(display);
       this.xvfb = this.spawnOwned('Xvfb', 'Xvfb', [display, '-screen', '0', `${this.config.screenWidth}x${this.config.screenHeight}x${this.config.screenDepth}`, '-nolisten', 'tcp']);
       await this.wait(300);
@@ -188,7 +196,7 @@ export class SharedBrowser {
         headless: false,
         viewport: { width: this.config.screenWidth, height: this.config.screenHeight },
         args: ['--no-first-run', '--no-default-browser-check', '--restore-last-session'],
-        env: { ...process.env, DISPLAY: display, ...(process.env.XAUTHORITY === undefined ? {} : { XAUTHORITY: process.env.XAUTHORITY }) },
+        env: this.localMode ? nativeBrowserEnv(process.env) : { ...process.env, DISPLAY: display! },
       });
       this.context.on('close', () => this.logger.write('Chromium closed'));
       this.logger.write('Chromium started');
@@ -196,12 +204,12 @@ export class SharedBrowser {
       const restored = this.context.pages().map((page, index) => this.tabPage(page, `restored-${index + 1}`));
       this.tabs = new OpportunityTabs(restored, async () => this.tabPage(await this.context!.newPage(), randomUUID()));
       if (!this.localMode) {
-        this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', display, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
+        this.vnc = this.spawnOwned('x11vnc', 'x11vnc', ['-display', display!, '-rfbport', String(this.config.vncPort), '-localhost', '-nopw', '-forever', '-shared', '-noxrecord', '-ncache', '10', '-ncache_cr']);
         await this.wait(300);
       }
       this.server = new ControlServer(this.config.socketPath, (request) => this.handle(request));
       await this.server.start();
-      this.logger.write(`supervisor ready mode=${this.localMode ? 'local' : 'vnc'} display=${display}`);
+      this.logger.write(`supervisor ready mode=${this.localMode ? 'local' : 'vnc'} display=${display ?? 'native'}`);
       process.once('SIGINT', () => { void this.stop(); });
       process.once('SIGTERM', () => { void this.stop(); });
       await new Promise<void>((resolve) => { this.resolveStop = resolve; });
@@ -274,7 +282,7 @@ export class SharedBrowser {
   }
 
   private spawnOwned(name: string, command: string, args: string[]): ManagedProcess {
-    const child = spawn(command, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DISPLAY: this.config.display } });
+    const child = spawn(command, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...(this.display === null ? {} : { DISPLAY: this.display }) } });
     this.logger.write(`${name} started pid=${child.pid ?? 'unknown'}`);
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (chunk: string) => {

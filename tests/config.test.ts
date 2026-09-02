@@ -69,4 +69,11 @@ describe('configuration', () => {
       BROWSER_CONTROL_SOCKET: './runtime/control.sock',
     }).vncPort).toBe(5900);
   });
+
+  it('does not require a display in local mode', () => {
+    expect(loadConfig({
+      BROWSER_PROFILE_DIR: './runtime/profile',
+      BROWSER_CONTROL_SOCKET: './runtime/control.sock',
+    }, { localMode: true }).display).toBeNull();
+  });
 });

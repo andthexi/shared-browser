@@ -1,6 +1,6 @@
 export interface BrowserConfig {
   vncPort: number;
-  display: string;
+  display: string | null;
   profileDir: string;
   socketPath: string;
   logFile: string;
@@ -25,10 +25,10 @@ function integer(env: NodeJS.ProcessEnv, name: string, defaultValue: number, min
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): BrowserConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, options: { localMode?: boolean } = {}): BrowserConfig {
   return {
     vncPort: integer(env, 'VNC_PORT', 5900, 1),
-    display: required(env, 'DISPLAY'),
+    display: options.localMode === true ? null : required(env, 'DISPLAY'),
     profileDir: required(env, 'BROWSER_PROFILE_DIR'),
     socketPath: required(env, 'BROWSER_CONTROL_SOCKET'),
     logFile: env.LOG_FILE ?? './runtime/shared-browser.log',

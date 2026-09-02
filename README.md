@@ -23,7 +23,7 @@ The supervisor runs in the background. Start is idempotent and waits for readine
 
 ```bash
 shared-browser start
-# Local desktop mode: inherit DISPLAY (and XAUTHORITY when set), skip Xvfb/x11vnc
+# Local desktop mode: native headed Chromium, skip Xvfb/x11vnc
 shared-browser start --local
 shared-browser status
 shared-browser logs --tail 50
@@ -42,10 +42,11 @@ The browser-control API uses caller-supplied stable `tabId` values, normally the
 The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
 explicit file uploads, but submit-like or ambiguous clicks are rejected.
 
-`shared-browser start --local` uses the launching environment's graphical `$DISPLAY` and optional
-`$XAUTHORITY`. It skips Xvfb and x11vnc and opens Chromium on the local desktop. Local status reports
-`mode: "local"` and `xvfb`/`x11vnc` as `not-used`. If the service is already running, `start --local`
-is idempotent and returns the existing status without switching modes; stop first to change modes.
+`shared-browser start --local` launches native headed Chromium without forwarding `$DISPLAY` or
+`$XAUTHORITY`. It skips Xvfb and x11vnc and opens Chromium through the device's native desktop
+windowing system. Local status reports `mode: "local"` and `xvfb`/`x11vnc` as `not-used`. If the
+service is already running, `start --local` is idempotent and returns the existing status without
+switching modes; stop first to change modes.
 
 The default display is `1680x945`. Change `SCREEN_WIDTH` and `SCREEN_HEIGHT` in the local `.env`
 when using a different VNC display.

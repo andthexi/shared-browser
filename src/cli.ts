@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { createConnection as connectSocket } from 'node:net';
 
-import { SharedBrowser } from './browser.js';
+import { nativeBrowserEnv, SharedBrowser } from './browser.js';
 import { commandPayload, usage as commandUsage } from './commands.js';
 import { loadConfig } from './config.js';
 import { RuntimeLogger } from './logger.js';
@@ -69,14 +69,12 @@ function usage(): ControlResponse { return { ok: false, error: commandUsage() };
 
 async function runSupervisor(): Promise<void> {
   const localMode = process.env.SHARED_BROWSER_LOCAL === '1';
-  const localDisplay = process.env.SHARED_BROWSER_DISPLAY;
-  if (localMode && (localDisplay === undefined || localDisplay.trim() === '')) throw new Error('local mode requires an inherited DISPLAY');
-  const browser = new SharedBrowser(loadConfig(), localMode, localMode ? localDisplay : undefined);
+  const browser = new SharedBrowser(loadConfig(process.env, { localMode }), localMode);
   await browser.start();
 }
 
-async function startBackground(localMode: boolean, inheritedDisplay?: string): Promise<void> {
-  const config = loadConfig();
+async function startBackground(localMode: boolean): Promise<void> {
+  const config = loadConfig(process.env, { localMode });
   const current = await request(config.socketPath, { op: 'status' });
   if (current.ok) { print(current); return; }
 
@@ -90,17 +88,12 @@ async function startBackground(localMode: boolean, inheritedDisplay?: string): P
     removePidFile(config.pidFile);
   }
 
-  if (localMode && (inheritedDisplay === undefined || inheritedDisplay.trim() === '')) {
-    print({ ok: false, error: 'local mode requires an inherited DISPLAY; set DISPLAY in the launching environment' });
-    process.exitCode = 1;
-    return;
-  }
 
   const child = spawn(process.execPath, [process.argv[1]!, 'start', '--supervisor'], {
     detached: true,
     stdio: 'ignore',
     cwd: process.cwd(),
-    env: { ...process.env, SHARED_BROWSER_LOCAL: localMode ? '1' : '0', ...(localMode ? { SHARED_BROWSER_DISPLAY: inheritedDisplay } : {}) },
+    env: { ...(localMode ? nativeBrowserEnv(process.env) : process.env), SHARED_BROWSER_LOCAL: localMode ? '1' : '0' },
   });
   child.unref();
 
@@ -148,9 +141,13 @@ async function showLogs(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const inheritedDisplay = process.env.DISPLAY;
   loadDotEnv();
   const command = process.argv[2];
+  const localMode = command === 'start' && (process.argv.slice(3).includes('--local') || process.env.SHARED_BROWSER_LOCAL === '1');
+  if (localMode) {
+    delete process.env.DISPLAY;
+    delete process.env.XAUTHORITY;
+  }
   if (command === undefined) { print(usage()); process.exitCode = 2; return; }
   if (command === 'start' && process.argv[3] === '--supervisor') {
     try { await runSupervisor(); }
@@ -158,7 +155,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'start') {
-    try { await startBackground(process.argv.slice(3).includes('--local'), inheritedDisplay); }
+    try { await startBackground(process.argv.slice(3).includes('--local')); }
     catch (cause) { print({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }); process.exitCode = 1; }
     return;
   }
