@@ -47,6 +47,21 @@ The browser-control API uses caller-supplied stable `tabId` values, normally the
 activate the browser window before acting. Set it to `false` (or `0`) in `.env` to keep the browser
 window in the background while performing those actions. Restart the service after changing it.
 
+The target object supports an optional explicit `frame` scope for `click` and `fill`:
+
+```json
+{"frame":{"url":"https://payments.example.com/checkout/","name":"payment-frame"},"role":"button","name":"Continue"}
+```
+
+Frame URLs must be absolute HTTP(S) URLs and match the exact scheme/origin plus a path prefix;
+frame names match exactly. A frame selector never falls back to the top-level document. Missing and
+ambiguous matches fail closed with `frame_not_found` or `ambiguous_frame` and include at most 20
+candidate frame descriptors.
+
+`inspect` retains the top-level `elements` field and adds bounded `frames` entries containing each
+frame's URL, name, parent URL, nested path, and interactive element metadata. Input values are not
+returned. Nested and cross-origin frames are supported through Playwright's frame abstraction.
+
 The browser-control API never submits forms. It allows reviewed navigation clicks, field filling, and
 explicit file uploads, but submit-like or ambiguous clicks are rejected.
 

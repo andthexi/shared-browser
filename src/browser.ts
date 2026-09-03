@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
 import type { BrowserConfig } from './config.js';
 import { displayNumber } from './config.js';
@@ -11,6 +11,7 @@ import { ControlServer, probeTcpPort, type ControlRequest, type ControlResponse 
 import { OpportunityTabs, type TabPage } from './tabs.js';
 import { RuntimeLogger } from './logger.js';
 import { removePidFile, writePidFile } from './process-identity.js';
+import { FrameTargetError, selectFrame, type FrameSelector } from './frame-target.js';
 
 declare global {
   interface Window { __sharedBrowserAgentAction?: boolean; }
@@ -22,6 +23,7 @@ interface ManagedProcess {
 }
 
 interface Target {
+  frame?: FrameSelector;
   label?: string;
   placeholder?: string;
   role?: string;
@@ -52,9 +54,16 @@ type PageMetadata = {
   title: string;
   text: string;
   elements: Array<Record<string, unknown>>;
+  frames: Array<{
+    url: string;
+    name: string;
+    parentUrl: string | null;
+    path: Array<{ url: string; name: string }>;
+    elements: Array<Record<string, unknown>>;
+  }>;
 };
 
-function error(message: string): ControlResponse { return { ok: false, error: message }; }
+function error(message: string, data: Record<string, unknown> = {}): ControlResponse { return { ok: false, error: message, ...data }; }
 function success(command: string, data: Record<string, unknown> = {}): ControlResponse { return { ok: true, command, ...data }; }
 
 export function nativeBrowserEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -82,24 +91,39 @@ function targetDescription(target: Target): string {
   throw new Error('target requires label, placeholder, role, or css');
 }
 
-function locator(page: Page, target: Target): Locator {
-  if (target.label !== undefined) return page.getByLabel(target.label, { exact: true });
-  if (target.placeholder !== undefined) return page.getByPlaceholder(target.placeholder, { exact: true });
+function targetFrame(page: Page, target: Target): Frame | Page {
+  if (target.frame === undefined) return page;
+  return selectFrame(page.frames().slice(1).map((frame) => ({
+    value: frame,
+    url: frame.url(),
+    name: frame.name(),
+  })), target.frame);
+}
+
+function locator(scope: Page | Frame, target: Target): Locator {
+  if (target.label !== undefined) return scope.getByLabel(target.label, { exact: true });
+  if (target.placeholder !== undefined) return scope.getByPlaceholder(target.placeholder, { exact: true });
   if (target.role !== undefined) {
     if (target.name === undefined) throw new Error('role target requires name');
-    return page.getByRole(target.role as Parameters<Page['getByRole']>[0], { name: target.name, exact: true });
+    return scope.getByRole(target.role as Parameters<Page['getByRole']>[0], { name: target.name, exact: true });
   }
-  if (target.css !== undefined) return page.locator(target.css).nth(target.index ?? 0);
+  if (target.css !== undefined) return scope.locator(target.css).nth(target.index ?? 0);
   throw new Error('target requires label, placeholder, role, or css');
 }
 
-async function withAgentGuard<T>(page: Page, action: () => Promise<T>): Promise<T> {
-  await page.evaluate(() => { window.__sharedBrowserAgentAction = true; });
-  try { return await action(); } finally { await page.evaluate(() => { window.__sharedBrowserAgentAction = false; }); }
+function targetLocator(page: Page, target: Target): { scope: Page | Frame; locator: Locator } {
+  const scope = targetFrame(page, target);
+  return { scope, locator: locator(scope, target) };
 }
 
-async function pageMetadata(page: Page): Promise<PageMetadata> {
-  const elements = await page.locator('a,button,input,textarea,select,[contenteditable="true"]').evaluateAll((nodes) => nodes
+async function withAgentGuard<T>(scope: Page | Frame, action: () => Promise<T>): Promise<T> {
+  await scope.evaluate(() => { window.__sharedBrowserAgentAction = true; });
+  try { return await action(); } finally { await scope.evaluate(() => { window.__sharedBrowserAgentAction = false; }); }
+}
+
+async function elementsMetadata(scope: Page | Frame): Promise<Array<Record<string, unknown>>> {
+  return scope.locator('a,button,input,textarea,select,[contenteditable="true"]').evaluateAll((nodes) => nodes
+    .slice(0, 100)
     .filter((node) => {
       const style = window.getComputedStyle(node);
       const rect = node.getBoundingClientRect();
@@ -120,7 +144,24 @@ async function pageMetadata(page: Page): Promise<PageMetadata> {
         disabled: 'disabled' in element ? (element as HTMLInputElement).disabled : false,
       };
     }));
-  return { url: page.url(), title: await page.title(), text: (await page.locator('body').innerText()).slice(0, 20_000), elements };
+}
+
+async function pageMetadata(page: Page): Promise<PageMetadata> {
+  const elements = await elementsMetadata(page);
+  const frames = await Promise.all(page.frames().slice(1, 65).map(async (frame) => {
+    const path: Array<{ url: string; name: string }> = [];
+    for (let current: Frame | null = frame; current !== null && current.parentFrame() !== null; current = current.parentFrame()) {
+      path.unshift({ url: current.url(), name: current.name() });
+    }
+    return {
+      url: frame.url(),
+      name: frame.name(),
+      parentUrl: frame.parentFrame()?.url() ?? null,
+      path,
+      elements: await elementsMetadata(frame),
+    };
+  }));
+  return { url: page.url(), title: await page.title(), text: (await page.locator('body').innerText()).slice(0, 20_000), elements, frames };
 }
 
 class PlaywrightTabPage implements TabPage {
@@ -332,7 +373,10 @@ export class SharedBrowser {
       if (request.op === 'click') return this.click(request);
       if (request.op === 'fill') return this.fill(request);
       return error(`unsupported operation: ${request.op}`);
-    } catch (cause) { return error(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) {
+      if (cause instanceof FrameTargetError) return error(cause.code, { frames: cause.candidates });
+      return error(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   private async click(request: ControlRequest): Promise<ControlResponse> {
@@ -342,7 +386,7 @@ export class SharedBrowser {
     const page = browserTab.page;
     const target = targetValue(request);
     return withCookieConsentRetry(async () => {
-      const selected = locator(page, target);
+      const { scope, locator: selected } = targetLocator(page, target);
       const metadata = await selected.evaluate((node) => {
         const element = node as HTMLElement & { type?: string };
         return { tagName: element.tagName, role: element.getAttribute('role') ?? '', type: element.getAttribute('type') ?? element.type ?? '', insideForm: element.closest('form') !== null, accessibleName: element.getAttribute('aria-label') ?? element.innerText ?? '' };
@@ -350,7 +394,7 @@ export class SharedBrowser {
       const safety = classifyClickSafety(metadata);
       if (!safety.ok) return error(safety.reason);
       const popup = this.context?.waitForEvent('page', { timeout: this.config.actionTimeoutMs }).catch(() => undefined);
-      await withAgentGuard(page, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
+      await withAgentGuard(scope, () => selected.click({ timeout: this.config.actionTimeoutMs, noWaitAfter: true }));
       const openedPage = await popup;
       if (openedPage !== undefined) {
         await openedPage.waitForLoadState('domcontentloaded', { timeout: this.config.pageLoadTimeoutMs }).catch(() => undefined);
@@ -376,8 +420,8 @@ export class SharedBrowser {
         if (field === null || typeof field !== 'object' || Array.isArray(field)) return error('each field must be an object');
         const item = field as Record<string, unknown>;
         const target = item.target as Target;
-        const selected = locator(page, target);
-        await withAgentGuard(page, async () => {
+        const { scope, locator: selected } = targetLocator(page, target);
+        await withAgentGuard(scope, async () => {
           if (typeof item.filePath === 'string') await selected.setInputFiles(item.filePath, { timeout: this.config.actionTimeoutMs });
           else if (item.select === true && typeof item.value === 'string') await selected.selectOption(item.value, { timeout: this.config.actionTimeoutMs });
           else if (typeof item.checked === 'boolean') await selected.setChecked(item.checked, { timeout: this.config.actionTimeoutMs });
